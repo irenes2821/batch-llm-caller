@@ -66,8 +66,16 @@
       <input id="promptFile" type="file" accept=".txt,.csv,text/plain,text/csv">
     </div>
     <div class="field">
+      <label for="apiUrl">API URL</label>
+      <input id="apiUrl" type="text" value="http://localhost:1234/v1/chat/completions" required>
+    </div>
+    <div class="field">
+      <label for="apiKey">API Key</label>
+      <input id="apiKey" type="password" value="">
+    </div>
+    <div class="field">
       <label for="model">Model name</label>
-      <input id="model" type="text" value="qwen3.5-0.8b" required>
+      <input id="model" type="text" value="qwen3.5-0.8b" placeholder="qwen3.5-0.8b (LM Studio), deepseek-flash (DEEPSEEK)" required>
     </div>
 
     <button id="runButton" type="button">Run</button>
@@ -84,9 +92,10 @@
   </main>
 
   <script>
-    const endpoint = 'http://localhost:1234/v1/chat/completions';
     const promptFile = document.getElementById('promptFile');
     const systemPrompt = document.getElementById('systemPrompt');
+    const apiUrl = document.getElementById('apiUrl');
+    const apiKey = document.getElementById('apiKey');
     const model = document.getElementById('model');
     const runButton = document.getElementById('runButton');
     const downloadButton = document.getElementById('downloadButton');
@@ -127,9 +136,12 @@
           { role: 'user', content: input }
         ]
       };
-      const response = await fetch(endpoint, {
+      const headers = { 'Content-Type': 'application/json' };
+      const key = apiKey.value.trim();
+      if (key) headers.Authorization = 'Bearer ' + key;
+      const response = await fetch(apiUrl.value.trim(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
       });
       if (!response.ok) {
@@ -152,6 +164,10 @@
       }
       if (!model.value.trim()) {
         status.textContent = 'Please enter a model name.';
+        return;
+      }
+      if (!apiUrl.value.trim()) {
+        status.textContent = 'Please enter an API URL.';
         return;
       }
       runButton.disabled = true;
