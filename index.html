@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM batch caller</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f7f8fa;
+      color: #1f2937;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
+    h1 { margin: 0 0 8px; font-size: 2rem; letter-spacing: -0.03em; }
+    .intro { margin: 0 0 32px; color: #5b6472; }
+    .field { margin: 0 0 22px; }
+    label { display: block; margin-bottom: 8px; font-weight: 650; }
+    textarea, input[type="text"], input[type="file"] {
+      width: 100%; font: inherit;
+    }
+    textarea, input[type="text"] {
+      border: 1px solid #cbd5e1; border-radius: 8px; background: #fff;
+      padding: 10px 12px; color: inherit;
+    }
+    textarea { min-height: 150px; resize: vertical; }
+    input[type="file"] { padding: 9px 0; }
+    button {
+      appearance: none; border: 0; border-radius: 8px; padding: 11px 18px;
+      background: #155eef; color: #fff; font: inherit; font-weight: 650; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #0d4fd7; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    #downloadButton { margin-top: 18px; background: #087443; }
+    #downloadButton:hover { background: #066038; }
+    .panel {
+      margin-top: 30px; padding: 16px; border: 1px solid #d9e0ea;
+      border-radius: 10px; background: #fff;
+    }
+    .panel h2 { margin: 0 0 10px; font-size: 1rem; }
+    #status { margin: 0; color: #4b5563; min-height: 1.5em; }
+    #results { display: grid; gap: 14px; }
+    .result { padding-top: 14px; border-top: 1px solid #e5e7eb; }
+    .result:first-child { padding-top: 0; border-top: 0; }
+    .result-label { margin: 0 0 5px; font-weight: 650; font-size: .9rem; color: #374151; }
+    .result pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+    .response { margin-top: 9px; color: #155eef; }
+    .error { color: #b42318; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>LLM batch caller</h1>
+    <p class="intro">Send one prompt per line to your local LM Studio server.</p>
+
+    <div class="field">
+      <label for="systemPrompt">System prompt</label>
+      <textarea id="systemPrompt" placeholder="You are a helpful assistant."></textarea>
+    </div>
+    <div class="field">
+      <label for="promptFile">Prompt file (.txt or .csv, one prompt per line)</label>
+      <input id="promptFile" type="file" accept=".txt,.csv,text/plain,text/csv">
+    </div>
+    <div class="field">
+      <label for="model">Model name</label>
+      <input id="model" type="text" value="qwen3.5-0.8b" required>
+    </div>
+
+    <button id="runButton" type="button">Run</button>
+    <button id="downloadButton" type="button" hidden>Download CSV</button>
+
+    <section class="panel" aria-live="polite">
+      <h2>Status</h2>
+      <p id="status">Choose a prompt file to begin.</p>
+    </section>
+    <section class="panel" id="resultsPanel" hidden>
+      <h2>Results</h2>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <script>
+    const endpoint = 'http://localhost:1234/v1/chat/completions';
+    const promptFile = document.getElementById('promptFile');
+    const systemPrompt = document.getElementById('systemPrompt');
+    const model = document.getElementById('model');
+    const runButton = document.getElementById('runButton');
+    const downloadButton = document.getElementById('downloadButton');
+    const status = document.getElementById('status');
+    const resultsPanel = document.getElementById('resultsPanel');
+    const resultsElement = document.getElementById('results');
+    let results = [];
+
+    function readFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('Could not read the selected file.'));
+        reader.readAsText(file);
+      });
+    }
+
+    function appendResult(row) {
+      const item = document.createElement('article');
+      item.className = 'result';
+      const label = document.createElement('p');
+      label.className = 'result-label';
+      label.textContent = 'Row ' + row.row_number + ' — input';
+      const input = document.createElement('pre');
+      input.textContent = row.input;
+      const response = document.createElement('pre');
+      response.className = row.response.startsWith('Error:') ? 'response error' : 'response';
+      response.textContent = row.response;
+      item.append(label, input, response);
+      resultsElement.append(item);
+    }
+
+    async function callModel(input) {
+      const body = {
+        model: model.value.trim(),
+        messages: [
+          { role: 'system', content: systemPrompt.value },
+          { role: 'user', content: input }
+        ]
+      };
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        let detail = '';
+        try { detail = await response.text(); } catch (_) { /* keep HTTP status */ }
+        throw new Error('HTTP ' + response.status + (detail ? ': ' + detail : ''));
+      }
+      const data = await response.json();
+      const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) return content.map(part => part.text || '').join('');
+      throw new Error('The response did not contain a chat completion.');
+    }
+
+    runButton.addEventListener('click', async () => {
+      const file = promptFile.files[0];
+      if (!file) {
+        status.textContent = 'Please choose a .txt or .csv prompt file.';
+        return;
+      }
+      if (!model.value.trim()) {
+        status.textContent = 'Please enter a model name.';
+        return;
+      }
+      runButton.disabled = true;
+      downloadButton.hidden = true;
+      results = [];
+      resultsElement.replaceChildren();
+      resultsPanel.hidden = false;
+      try {
+        const text = await readFile(file);
+        const prompts = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim() !== '');
+        if (!prompts.length) throw new Error('The selected file has no non-empty lines.');
+        for (let index = 0; index < prompts.length; index++) {
+          const rowNumber = index + 1;
+          status.textContent = 'Processing row ' + rowNumber + ' of ' + prompts.length + '…';
+          let responseText;
+          try {
+            responseText = await callModel(prompts[index]);
+          } catch (error) {
+            responseText = 'Error: ' + (error && error.message ? error.message : String(error));
+          }
+          const row = { row_number: rowNumber, input: prompts[index], response: responseText };
+          results.push(row);
+          appendResult(row);
+        }
+        status.textContent = 'Finished processing ' + results.length + ' row' + (results.length === 1 ? '' : 's') + '.';
+        downloadButton.hidden = false;
+      } catch (error) {
+        status.textContent = 'Could not start batch: ' + (error && error.message ? error.message : String(error));
+      } finally {
+        runButton.disabled = false;
+      }
+    });
+
+    function csvField(value) {
+      return '"' + String(value).replace(/"/g, '""') + '"';
+    }
+
+    downloadButton.addEventListener('click', () => {
+      const csv = ['row_number,input,response']
+        .concat(results.map(row => [row.row_number, row.input, row.response].map(csvField).join(',')))
+        .join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'results.csv';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
